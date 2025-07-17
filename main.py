@@ -451,7 +451,7 @@ if termo:
     with st.spinner("🔍 Buscando produtos..."):
         # Processa e busca Shibata
         produtos_shibata = []
-        max_workers = 8
+        max_workers = 7
         def obter_total_paginas(termo):
             url = f"https://services.vipcommerce.com.br/api-admin/v1/org/{ORG_ID}/filial/1/centro_distribuicao/1/loja/buscas/produtos/termo/{termo}?page=1"
             try:
@@ -470,11 +470,6 @@ if termo:
 
 
 
-
-
-        produtos_shibata = []
-        max_workers = 8
-
         def buscar_todas_paginas_para_termo(termo):
             resultados = []
             total_paginas = obter_total_paginas(termo)
@@ -483,24 +478,17 @@ if termo:
             return resultados
 
 
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(buscar_todas_paginas_para_termo, termo) for termo in termos_expandidos]
+            for future in as_completed(futures):
+                produtos_shibata.extend(future.result())
+
         # Debugger para mostrar quantidade de paginas. Coleta total de páginas por termo antes do paralelismo
         paginas_por_termo = {}
         for termo_busca in termos_expandidos:
             total_paginas = obter_total_paginas(termo_busca)
             paginas_por_termo[termo_busca] = total_paginas
             st.info(f"🔎 Termo: *{termo_busca}* → Total de páginas: *{total_paginas}*")
-
-
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(buscar_todas_paginas_para_termo, termo) for termo in termos_expandidos]
-            for future in as_completed(futures):
-                produtos_shibata.extend(future.result())
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(buscar_todas_paginas_para_termo, termo) for termo in termos_expandidos]
-            for future in as_completed(futures):
-                produtos_shibata.extend(future.result())
 
         # Remover duplicados por ID
         ids_vistos = set()
