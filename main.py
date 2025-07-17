@@ -452,46 +452,13 @@ if termo:
         # Processa e busca Shibata
         produtos_shibata = []
         max_workers = 8
-        # Obter total de páginas da API apenas uma vez
-        def obter_total_paginas(termo):
-            url = f"https://services.vipcommerce.com.br/api-admin/v1/org/{ORG_ID}/filial/1/centro_distribuicao/1/loja/buscas/produtos/termo/{termo}?page=1"
-            try:
-                response = requests.get(url, headers=HEADERS_SHIBATA, timeout=10)
-                if response.status_code == 200:
-                    data = response.json().get('data', {})
-                    total_paginas = data.get('paginator', {}).get('total_pages', 1)
-                    total_paginas = min(total_paginas, 7)  # Limita até 7
-                    st.info(f"🔎 Termo: *{termo}* → Total de páginas: *{total_paginas}*")
-                    return total_paginas
-            except Exception as e:
-                st.warning(f"Erro ao obter páginas para '{termo}': {e}")
-            return 1
-
-        produtos_shibata = []
-        max_workers = 8
-
-        def buscar_todas_paginas_para_termo(termo):
-            resultados = []
-            total_paginas = obter_total_paginas(termo)
-            for pagina in range(1, total_paginas + 1):
-                resultados.extend(buscar_pagina_shibata(termo, pagina))
-            return resultados
-
-
-        # Coleta total de páginas por termo antes do paralelismo
-        paginas_por_termo = {}
-        for termo_busca in termos_expandidos:
-            total_paginas = obter_total_paginas(termo_busca)
-            paginas_por_termo[termo_busca] = total_paginas
-            st.info(f"🔎 Termo: *{termo_busca}* → Total de páginas: *{total_paginas}*")
-
-
-        
+        max_paginas = 15
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(buscar_todas_paginas_para_termo, termo) for termo in termos_expandidos]
+            futures = [executor.submit(buscar_pagina_shibata, t, pagina)
+                           for t in termos_expandidos
+                           for pagina in range(1, max_paginas + 1)]
             for future in as_completed(futures):
-                produtos_shibata.extend(future.result())
-
+                    produtos_shibata.extend(future.result())
 
         # Remover duplicados por ID
         ids_vistos = set()
