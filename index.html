@@ -1,116 +1,380 @@
 <!DOCTYPE html>
-<html lang="pt-br">
+<html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lista de Compras Dinâmica</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background-color: #f4f7f9;
-      color: #333;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      margin: 0;
-    }
-    .container {
-      background-color: white;
-      padding: 2rem 3rem;
-      border-radius: 10px;
-      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-      width: 90%;
-      max-width: 500px;
-      text-align: center;
-    }
-    h1 {
-      color: #2c3e50;
-      margin-bottom: 1.5rem;
-    }
-    ul {
-      list-style-type: none;
-      padding: 0;
-      text-align: left;
-    }
-    li {
-      background-color: #ecf0f1;
-      border-radius: 5px;
-      padding: 0.8rem 1rem;
-      margin-bottom: 0.5rem;
-      font-size: 1.1rem;
-      transition: transform 0.2s;
-    }
-    li:hover {
-      transform: scale(1.02);
-    }
-    .status {
-      font-style: italic;
-      color: #7f8c8d;
-      height: 20px;
-    }
-    .error {
-      color: #e74c3c;
-      font-weight: bold;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minha Lista de Filmes e Séries</title>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
+
+        body {
+            font-family: 'Roboto', sans-serif;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: #2b2b2b;
+            padding: 20px 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+
+        header {
+            text-align: center;
+            border-bottom: 1px solid #444;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 2.5em;
+            color: #e5c535; /* Cor dourada */
+        }
+
+        .search-container {
+            position: relative;
+            margin-bottom: 40px;
+        }
+
+        #searchInput {
+            width: 100%;
+            padding: 15px;
+            font-size: 1.1em;
+            border-radius: 8px;
+            border: 2px solid #555;
+            background-color: #333;
+            color: #fff;
+            box-sizing: border-box;
+        }
+
+        #searchInput:focus {
+            outline: none;
+            border-color: #e5c535;
+        }
+
+        .suggestions-list {
+            position: absolute;
+            width: 100%;
+            background-color: #333;
+            border: 1px solid #555;
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            max-height: 400px;
+            overflow-y: auto;
+            z-index: 1000;
+        }
+
+        .suggestion-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            cursor: pointer;
+            border-bottom: 1px solid #444;
+        }
+
+        .suggestion-item:last-child {
+            border-bottom: none;
+        }
+
+        .suggestion-item:hover {
+            background-color: #e5c535;
+            color: #1a1a1a;
+        }
+
+        .suggestion-item img {
+            width: 40px;
+            height: 60px;
+            object-fit: cover;
+            margin-right: 15px;
+            border-radius: 4px;
+        }
+
+        h2 {
+            font-size: 1.8em;
+            border-bottom: 2px solid #e5c535;
+            padding-bottom: 10px;
+            margin-top: 0;
+        }
+
+        #watchlist {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        #watchlist th, #watchlist td {
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid #444;
+        }
+
+        #watchlist th {
+            background-color: #333;
+        }
+
+        #watchlist img {
+            width: 80px;
+            border-radius: 8px;
+        }
+
+        .trailer-link {
+            display: inline-block;
+            padding: 10px 18px;
+            background-color: #c00;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+
+        .trailer-link:hover {
+            background-color: #e50914;
+        }
+
+        .remove-btn {
+            padding: 8px 16px;
+            background-color: #6d6d6d;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+
+        .remove-btn:hover {
+            background-color: #888888;
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #444;
+            color: #888;
+        }
+
+        footer a {
+            color: #fff;
+            text-decoration: none;
+        }
+    </style>
 </head>
 <body>
 
-  <div class="container">
-    <h1>🛒 Minha Lista de Compras</h1>
-    <p class="status" id="status-message">Carregando itens do Cloudflare...</p>
-    <ul id="shopping-list">
-      </ul>
-  </div>
+    <div class="container">
+        <header>
+            <h1>Minha Lista para Assistir</h1>
+            <p>Adicione filmes e séries usando a busca abaixo</p>
+        </header>
 
-  <script>
-    // IMPORTANTE: Substitua esta URL pela URL do seu Worker
-    // que você obterá no final da configuração do Cloudflare.
-    const WORKER_URL = 'https://seu-worker.seu-subdominio.workers.dev';
+        <main>
+            <div class="search-container">
+                <input type="text" id="searchInput" placeholder="Digite o nome de um filme ou série...">
+                <div id="suggestions" class="suggestions-list"></div>
+            </div>
 
-    // Função para buscar e renderizar a lista
-    async function fetchShoppingList() {
-      const listElement = document.getElementById('shopping-list');
-      const statusMessage = document.getElementById('status-message');
+            <div class="watchlist-container">
+                <h2>Sua Lista</h2>
+                <table id="watchlist">
+                    <thead>
+                        <tr>
+                            <th>Poster</th>
+                            <th>Título</th>
+                            <th>Tipo</th>
+                            <th>Trailer</th>
+                            <th>Ação</th>
+                        </tr>
+                    </thead>
+                    <tbody id="watchlistBody">
+                        </tbody>
+                </table>
+            </div>
+        </main>
 
-      try {
-        const response = await fetch(WORKER_URL);
+        <footer>
+            <p>Dados fornecidos por <a href="http://www.omdbapi.com/" target="_blank">OMDb API</a></p>
+        </footer>
+    </div>
 
-        if (!response.ok) {
-          // Captura erros de HTTP (como 404 ou 500)
-          const errorData = await response.json();
-          throw new Error(errorData.error || `Erro HTTP: ${response.status}`);
-        }
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // ######################################################################
+            // ## COLE SUA CHAVE DE API DA OMDB AQUI DENTRO DAS ASPAS             ##
+            // ######################################################################
+            const API_KEY = "f2bebd54"; 
+            // ######################################################################
 
-        const items = await response.json();
+            const API_URL = `https://www.omdbapi.com/?apikey=${API_KEY}`;
 
-        // Limpa a mensagem de status e a lista atual
-        statusMessage.textContent = '';
-        listElement.innerHTML = '';
+            const searchInput = document.getElementById('searchInput');
+            const suggestionsContainer = document.getElementById('suggestions');
+            const watchlistBody = document.getElementById('watchlistBody');
 
-        if (items.length === 0) {
-          statusMessage.textContent = 'A lista de compras está vazia!';
-          return;
-        }
+            let watchlist = JSON.parse(localStorage.getItem('watchlist')) || [];
 
-        // Adiciona cada item na lista na tela
-        items.forEach(item => {
-          const listItem = document.createElement('li');
-          listItem.textContent = item.nome;
-          listElement.appendChild(listItem);
+            // Função para buscar sugestões na API da OMDb
+            const fetchSuggestions = async (query) => {
+                if (query.length < 3) {
+                    suggestionsContainer.innerHTML = '';
+                    suggestionsContainer.style.display = 'none';
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`${API_URL}&s=${encodeURIComponent(query)}`);
+                    const data = await response.json();
+
+                    if (data.Response === "True") {
+                        displaySuggestions(data.Search);
+                    } else {
+                        suggestionsContainer.innerHTML = '';
+                        suggestionsContainer.style.display = 'none';
+                    }
+                } catch (error) {
+                    console.error("Erro ao buscar sugestões:", error);
+                }
+            };
+
+            // Função para exibir as sugestões
+            const displaySuggestions = (items) => {
+                suggestionsContainer.innerHTML = '';
+                if (!items || items.length === 0) {
+                    suggestionsContainer.style.display = 'none';
+                    return;
+                }
+
+                items.slice(0, 7).forEach(item => {
+                    const div = document.createElement('div');
+                    div.classList.add('suggestion-item');
+
+                    const poster = (item.Poster && item.Poster !== "N/A") ? item.Poster : 'https://via.placeholder.com/40x60?text=No+Image';
+
+                    div.innerHTML = `
+                        <img src="${poster}" alt="Poster">
+                        <div>
+                            <strong>${item.Title}</strong> (${item.Year})<br>
+                            <small style="text-transform: capitalize;">${item.Type}</small>
+                        </div>
+                    `;
+
+                    div.addEventListener('click', () => {
+                        addItemToWatchlist(item.imdbID);
+                        searchInput.value = '';
+                        suggestionsContainer.style.display = 'none';
+                    });
+
+                    suggestionsContainer.appendChild(div);
+                });
+
+                suggestionsContainer.style.display = 'block';
+            };
+
+            // Adiciona um item à lista de observação (usando o ID da OMDb)
+            const addItemToWatchlist = async (imdbID) => {
+                if (watchlist.some(item => item.id === imdbID)) {
+                    alert("Este item já está na sua lista!");
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`${API_URL}&i=${imdbID}`);
+                    const details = await response.json();
+
+                    if (details.Response === "True") {
+                        const watchlistItem = {
+                            id: details.imdbID,
+                            title: details.Title,
+                            poster: (details.Poster && details.Poster !== "N/A") ? details.Poster : 'https://via.placeholder.com/80x120?text=No+Image',
+                            year: details.Year,
+                            type: details.Type
+                        };
+
+                        watchlist.push(watchlistItem);
+                        saveWatchlist();
+                        renderWatchlistItem(watchlistItem);
+                    }
+                } catch (error) {
+                    console.error("Erro ao adicionar item:", error);
+                }
+            };
+
+            // Renderiza um item na tabela da watchlist
+            const renderWatchlistItem = (item) => {
+                const row = document.createElement('tr');
+                row.setAttribute('data-id', item.id);
+
+                // Cria o link de busca do trailer no YouTube
+                const youtubeSearchQuery = encodeURIComponent(`${item.title} ${item.year} trailer oficial`);
+                const youtubeSearchUrl = `https://www.youtube.com/results?search_query=${youtubeSearchQuery}`;
+
+                row.innerHTML = `
+                    <td>
+                        <img src="${item.poster}" alt="Poster de ${item.title}">
+                    </td>
+                    <td>${item.title} (${item.year})</td>
+                    <td style="text-transform: capitalize;">${item.type}</td>
+                    <td>
+                        <a href="${youtubeSearchUrl}" target="_blank" class="trailer-link">Ver Trailer</a>
+                    </td>
+                    <td>
+                        <button class="remove-btn">Remover</button>
+                    </td>
+                `;
+                watchlistBody.appendChild(row);
+
+                row.querySelector('.remove-btn').addEventListener('click', () => {
+                    removeWatchlistItem(item.id);
+                });
+            };
+
+            // Remove um item da lista
+            const removeWatchlistItem = (id) => {
+                watchlist = watchlist.filter(item => item.id !== id);
+                saveWatchlist();
+
+                const rowToRemove = watchlistBody.querySelector(`tr[data-id='${id}']`);
+                if (rowToRemove) {
+                    watchlistBody.removeChild(rowToRemove);
+                }
+            };
+
+            // Salva a lista no localStorage do navegador
+            const saveWatchlist = () => {
+                localStorage.setItem('watchlist', JSON.stringify(watchlist));
+            };
+
+            // Carrega e exibe a lista salva ao iniciar a página
+            const loadWatchlist = () => {
+                watchlist.forEach(item => renderWatchlistItem(item));
+            };
+
+            // Event listener para o campo de busca (com debounce)
+            let debounceTimer;
+            searchInput.addEventListener('input', (e) => {
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(() => {
+                    fetchSuggestions(e.target.value);
+                }, 300); // Aguarda 300ms após o usuário parar de digitar para fazer a busca
+            });
+
+            // Esconde as sugestões se o usuário clicar fora
+            document.addEventListener('click', (e) => {
+                if (!suggestionsContainer.contains(e.target) && e.target !== searchInput) {
+                    suggestionsContainer.style.display = 'none';
+                }
+            });
+
+            // Inicia o site carregando a lista salva
+            loadWatchlist();
         });
-
-      } catch (error) {
-        console.error('Falha ao buscar a lista de compras:', error);
-        statusMessage.textContent = `Erro ao carregar a lista: ${error.message}`;
-        statusMessage.classList.add('error');
-      }
-    }
-
-    // Executa a função quando a página terminar de carregar
-    document.addEventListener('DOMContentLoaded', fetchShoppingList);
-  </script>
-
+    </script>
 </body>
 </html>
