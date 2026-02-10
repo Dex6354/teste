@@ -11,7 +11,7 @@ st.set_page_config(page_title="Domain Hunter Pro", layout="wide")
 
 def get_all_domains_from_cert(hostname):
     """
-    Extrai exaustivamente todos os domínios do certificado SSL (SAN)
+    Tenta extrair domínios do certificado com tolerância a erros e timeout longo.
     """
     domains = set()
     if not hostname:
@@ -19,98 +19,97 @@ def get_all_domains_from_cert(hostname):
         
     domains.add(hostname)
     
-    # Tentamos conectar na porta 443 (padrão SSL)
-    port = 443
-    
-    try:
-        # Cria um contexto SSL que não valida o certificado (para aceitar mirrors expirados/autoassinados)
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-        
-        with socket.create_connection((hostname, port), timeout=10) as sock:
+    # Contexto SSL ultra-permissivo
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    # Forçar protocolos mais antigos se necessário
+    context.set_ciphers('DEFAULT@SECLEVEL=1')
+
+    # Tenta na porta 443 e também na 8443 (comum em painéis)
+    for port in [443, 8443]:
+        try:
+            # Aumentamos o timeout para 15 segundos
+            sock = socket.create_connection((hostname, port), timeout=15)
             with context.wrap_socket(sock, server_hostname=hostname) as ssock:
                 cert = ssock.getpeercert(binary_form=False)
                 
-                # 1. Busca no Subject (Common Name)
+                # Extração do Common Name
                 for sub in cert.get('subject', ()):
                     for key, value in sub:
                         if key == 'commonName':
                             domains.add(value.replace('*.', ''))
                 
-                # 2. Busca no Subject Alternative Name (SAN) - Onde ficam os mirrors
+                # Extração do SAN (Subject Alternative Names)
                 if 'subjectAltName' in cert:
                     for type, name in cert['subjectAltName']:
                         if type == 'DNS':
                             domains.add(name.replace('*.', ''))
-                            
-    except Exception as e:
-        st.error(f"Erro ao ler certificado de {hostname}: {e}")
-        
+            break # Se conseguiu em uma porta, para de tentar outras
+        except Exception:
+            continue
+            
     return domains
 
 # --- INTERFACE ---
-st.title("🔍 Xtream Domain & Mirror Finder (Deep Scan)")
-st.markdown("Busca profunda por domínios alternativos via registros de certificados SSL.")
+st.title("🔍 Deep Domain Scanner")
+st.markdown("Busca avançada de mirrors via Certificado Digital (SAN/SSL).")
 
-# Link padrão atualizado
+# Link padrão solicitado
 default_link = "http://tv10.me"
 
 input_text = st.text_input(
     "URL do Servidor / Link M3U:", 
     value=default_link,
-    placeholder="Insira o link aqui..."
+    placeholder="Ex: http://servidor.com:80"
 )
 
-if st.button("🚀 Mapear Domínios"):
+if st.button("🚀 Iniciar Varredura"):
     if input_text:
-        # Limpeza da URL para pegar apenas o domínio
-        if not input_text.startswith(('http://', 'https://')):
-            url_to_parse = 'http://' + input_text
-        else:
-            url_to_parse = input_text
-            
-        parsed_url = urlparse(url_to_parse)
-        hostname = parsed_url.hostname
+        # Extração limpa do hostname
+        raw_url = input_text.strip()
+        if not raw_url.startswith(('http://', 'https://')):
+            raw_url = 'http://' + raw_url
+        
+        hostname = urlparse(raw_url).hostname
         
         if not hostname:
-            st.error("⚠️ URL inválida.")
+            st.error("⚠️ Hostname inválido.")
         else:
-            with st.spinner(f"Fazendo varredura profunda no certificado de {hostname}..."):
-                # Busca de mirrors via SSL (Deep Scan)
+            with st.spinner(f"Tentando ler certificados de {hostname}... Isso pode levar 15s."):
+                
                 found_domains = get_all_domains_from_cert(hostname)
                 
-                # Busca de IP e DNS Reverso
                 try:
                     ip_addr = socket.gethostbyname(hostname)
                     reverse_dns = socket.getfqdn(ip_addr)
                 except:
-                    ip_addr, reverse_dns = "Não encontrado", "Não encontrado"
+                    ip_addr, reverse_dns = "N/A", "N/A"
 
-                # --- EXIBIÇÃO DOS RESULTADOS ---
-                st.subheader("📊 Relatório de Infraestrutura")
+                # --- EXIBIÇÃO ---
+                st.subheader(f"🌐 Resultados para {hostname}")
                 
                 c1, c2 = st.columns(2)
-                with c1:
-                    st.metric("IP Atual", ip_addr)
-                with c2:
-                    st.metric("DNS Reverso", reverse_dns)
+                c1.metric("IP do Servidor", ip_addr)
+                c2.metric("DNS Reverso", reverse_dns)
 
                 st.divider()
 
-                # Filtrar domínios vazios ou inválidos
-                lista_limpa = sorted([d for d in found_domains if d])
+                # Limpeza final dos domínios encontrados
+                lista_limpa = sorted([d.lower() for d in found_domains if d])
 
-                if len(lista_limpa) > 0:
-                    st.success(f"🔥 Foram detectados **{len(lista_limpa)}** domínios no certificado!")
-                    
+                if len(lista_limpa) > 1:
+                    st.success(f"✅ Encontrados **{len(lista_limpa)}** domínios no certificado!")
                     for d in lista_limpa:
-                        status = "🌐 Principal" if d == hostname else "🔗 Mirror / Alternativo"
-                        st.write(f"- `{d}` ({status})")
+                        if d == hostname.lower():
+                            st.write(f"🔹 **{d}** (Domínio Alvo)")
+                        else:
+                            st.write(f"🔗 `{d}` (Mirror Encontrado)")
                     
-                    st.text_area("Lista bruta para cópia:", value="\n".join(lista_limpa), height=150)
+                    st.text_area("Copiável:", value="\n".join(lista_limpa), height=100)
+                elif len(lista_limpa) == 1:
+                    st.warning("Apenas o domínio original foi encontrado. O servidor pode estar usando um certificado único (sem mirrors) ou estar bloqueando a varredura.")
                 else:
-                    st.warning("Nenhum domínio extraído. O servidor pode estar usando uma porta SSL não padrão ou não possuir SAN.")
+                    st.error("Não foi possível ler o certificado SSL (Conexão Recusada ou Timeout).")
 
-st.divider()
-st.caption("Nota: Se um domínio como '5sco.co' está no certificado de 'tv10.me', este script irá listá-lo.")
+st.info("💡 **Dica:** Servidores de IPTV costumam bloquear IPs de data centers (como os do Streamlit Cloud). Se o erro de Timeout persistir, tente rodar o código localmente em sua máquina.")
