@@ -1,115 +1,98 @@
 import streamlit as st
 import re
-import requests
-from urllib.parse import quote, urlparse
-from datetime import datetime
 import socket
+import ssl
+import OpenSSL
+from urllib.parse import urlparse
 import urllib3
 
-# Desabilitar avisos SSL
+# Configurações básicas
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+st.set_page_config(page_title="DNS & SSL Domain Hunter", layout="wide")
 
-st.set_page_config(page_title="Xtream Formats & Geo", layout="wide")
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) VLC/3.0.18"
-}
-
-def get_geo_info(base_url):
-    """Obtém o país e a bandeira do servidor"""
+def get_domains_from_ssl(hostname, port=443):
+    """Extrai todos os domínios listados no certificado SSL (SAN)"""
+    domains = set()
     try:
-        domain = urlparse(base_url).hostname
-        ip_addr = socket.gethostbyname(domain)
-        resp = requests.get(f"http://ip-api.com/json/{ip_addr}", timeout=5).json()
-        country = resp.get('country', 'Unknown')
-        code = resp.get('countryCode', '')
-        # Mapeamento simples de bandeira para alguns países
-        flags = {"UA": "🇺🇦", "BR": "🇧🇷", "US": "🇺🇸", "FR": "🇫🇷", "DE": "🇩🇪"}
-        flag = flags.get(code, "🌐")
-        return f"{flag} {country} ({code})"
-    except:
-        return "🌐 Desconhecido"
+        # Adiciona o próprio hostname original
+        domains.add(hostname)
+        
+        # Conexão SSL para obter o certificado
+        cert = ssl.get_server_certificate((hostname, port))
+        x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
+        
+        # Varre as extensões do certificado em busca de Subject Alternative Names
+        for i in range(x509.get_extension_count()):
+            ext = x509.get_extension(i)
+            if ext.get_short_name() == b'subjectAltName':
+                # Limpa a string para pegar apenas os nomes de domínio
+                alt_names = str(ext).split(", ")
+                for name in alt_names:
+                    if "DNS:" in name:
+                        domains.add(name.replace("DNS:", "").strip())
+    except Exception as e:
+        pass # Silencioso se não houver SSL ou falhar
+    return domains
 
-def get_supported_formats(api_url):
-    """Analisa os formatos e extensões suportados pelo painel"""
-    formats = set()
+def get_reverse_dns(hostname):
+    """Tenta encontrar o IP e verificar se há outros registros vinculados"""
     try:
-        # 1. Verifica no Index da API (Geralmente contém as extensões permitidas)
-        resp = requests.get(api_url, headers=HEADERS, verify=False, timeout=10).json()
-        u_info = resp.get("user_info", {})
-        
-        # O campo 'url_suffix' indica o formato padrão (ex: .ts ou .m3u8)
-        suffix = u_info.get("url_suffix")
-        if suffix:
-            formats.add(suffix.replace('.', ''))
-
-        # 2. Amostragem de streams para ver formatos reais
-        streams_resp = requests.get(f"{api_url}&action=get_live_streams", headers=HEADERS, verify=False, timeout=10).json()
-        if isinstance(streams_resp, list) and len(streams_resp) > 0:
-            for item in streams_resp[:10]: # Checa os 10 primeiros para diversidade
-                ext = item.get('container_extension')
-                if ext: formats.add(ext)
-        
-        # 3. Adiciona RTMP se o servidor for antigo/compatível (comum em Xtream)
-        # Se aceita TS e M3U8, geralmente suporta ambos via parâmetro &output=
-        if "ts" in formats or "m3u8" in formats:
-            formats.add("ts")
-            formats.add("m3u8")
-            
+        ip_addr = socket.gethostbyname(hostname)
+        return ip_addr, socket.getfqdn(ip_addr)
     except:
-        pass
-    
-    # Retorna como string formatada [m3u8, ts, rtmp]
-    return f"[{', '.join(sorted(list(formats)))}]" if formats else "[ts]"
-
-def parse_input(text):
-    """Extrai credenciais de blocos de texto ou URLs"""
-    pattern = r"(https?://[^\s\"']+(?:get\.php|player_api\.php)\?username=([a-zA-Z0-9._-]+)&password=([a-zA-Z0-9._-]+))"
-    return re.findall(pattern, text)
+        return None, None
 
 # --- INTERFACE ---
-st.title("🛡️ Xtream Intelligence Analyzer")
-st.markdown("Extração de **País 🌍** e **Formatos Suportados 🎥**")
+st.title("🔍 Domain & SSL Mirror Hunter")
+st.markdown("Insira o link M3U para descobrir todos os domínios alternativos vinculados ao servidor via **Certificado SSL** e **DNS**.")
 
-with st.container(border=True):
-    input_text = st.text_area("Cole aqui os links ou o dump do painel:", height=150)
-    btn_analisar = st.button("🚀 Iniciar Varredura")
+input_text = st.text_input("Cole o link M3U ou URL do servidor aqui:", 
+                          placeholder="http://exemplo.com:80/get.php?username=...")
 
-if btn_analisar and input_text:
-    found_urls = parse_input(input_text)
-    
-    if not found_urls:
-        st.error("Nenhuma credencial Xtream encontrada.")
-    else:
-        for full_url, user, pwd in found_urls:
-            base = re.search(r"(https?://[^/]+)", full_url).group(1)
-            api_url = f"{base}/player_api.php?username={quote(user)}&password={quote(pwd)}"
-            
-            with st.spinner(f"Analisando {base}..."):
-                geo = get_geo_info(base)
-                formats = get_supported_formats(api_url)
+if st.button("🔎 Buscar Domínios Alternativos"):
+    if input_text:
+        # Extração do Host e Porta
+        parsed_url = urlparse(input_text)
+        hostname = parsed_url.hostname
+        port = parsed_url.port if parsed_url.port else (443 if parsed_url.scheme == "https" else 80)
+        
+        if not hostname:
+            st.error("URL Inválida.")
+        else:
+            with st.spinner(f"Fazendo varredura profunda em {hostname}..."):
+                # 1. Busca via SSL (A forma mais certeira de achar mirrors)
+                # Tentamos na 443 mesmo que o link seja porta 80, pois o certificado fica lá
+                ssl_domains = get_domains_from_ssl(hostname)
                 
-                # Chamada para pegar contagens
-                try:
-                    main_data = requests.get(api_url, headers=HEADERS, verify=False, timeout=10).json()
-                    u_info = main_data.get("user_info", {})
-                    status = "✅ Ativo" if u_info.get("auth") == 1 else "❌ Inativo"
-                    exp = datetime.fromtimestamp(int(u_info['exp_date'])).strftime('%d/%m/%Y') if u_info.get('exp_date', '').isdigit() and int(u_info['exp_date']) > 0 else "Ilimitado"
-                except:
-                    status, exp = "⚠️ Erro", "N/A"
+                # 2. Busca via IP/DNS
+                ip, fqdn = get_reverse_dns(hostname)
+                
+                # --- EXIBIÇÃO ---
+                st.subheader(f"🌐 Resultados para: {hostname}")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.info(f"**IP do Servidor:** `{ip}`")
+                with col2:
+                    st.info(f"**Hostname Reverso:** `{fqdn}`")
 
-                # --- EXIBIÇÃO ESTILIZADA ---
-                with st.expander(f"📋 Resultado para: {urlparse(base).hostname}", expanded=True):
-                    c1, c2, c3 = st.columns(3)
-                    with c1:
-                        st.write(f"**𝐂𝐨𝐮𝐧𝐭𝐫𝐲:** ➩ {geo}")
-                        st.write(f"**𝐅𝐨𝐫𝐦𝐚𝐭𝐬:** ➩ `{formats}`")
-                    with c2:
-                        st.write(f"**Status:** {status}")
-                        st.write(f"**Validade:** {exp}")
-                    with c3:
-                        st.write(f"👤 **User:** `{user}`")
-                        st.write(f"🔑 **Pass:** `{pwd}`")
+                st.divider()
+                
+                if ssl_domains:
+                    st.success(f"Foram encontrados **{len(ssl_domains)}** domínios vinculados no SSL:")
+                    
+                    # Criar uma lista limpa para o usuário copiar
+                    domain_list = sorted(list(ssl_domains))
+                    
+                    # Exibição em tabela para facilitar a leitura
+                    for d in domain_list:
+                        status = "🟢 Principal" if d == hostname else "🔗 Mirror / Alternativo"
+                        st.code(f"{d} ({status})")
+                        
+                    # Opção de download ou cópia rápida
+                    st.text_area("Lista para Copiar:", value="\n".join(domain_list), height=150)
+                else:
+                    st.warning("Nenhum domínio alternativo encontrado via SSL. O servidor pode não usar HTTPS ou não possuir nomes alternativos no certificado.")
 
-st.divider()
-st.caption("Nota: A detecção de formatos [rtmp] é baseada na compatibilidade padrão de servidores Xtream UI.")
+st.caption("Nota: A verificação SSL tenta conectar preferencialmente na porta 443 para ler o certificado X.509.")
