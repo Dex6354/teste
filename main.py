@@ -4,84 +4,90 @@ import pandas as pd
 import re
 import socket
 from urllib.parse import urlparse
+import concurrent.futures
 
-st.set_page_config(page_title="M3U Analyzer Pro", page_icon="📺", layout="wide")
+st.set_page_config(page_title="IPTV Analyzer Pro", page_icon="📡", layout="wide")
 
-st.title("📺 M3U Stream & Server Analyzer")
-st.markdown("Insira seu link M3U abaixo para analisar formatos e localização do servidor.")
+st.title("📡 Analisador de M3U & Status de Conexão")
 
-# Input do link
-url_input = st.text_input("Link M3U:", placeholder="http://exemplo.com/get.php?username=...")
+url_input = st.text_input("Cole o link M3U aqui:", placeholder="http://...")
 
 def get_server_info(url):
     try:
         domain = urlparse(url).netloc.split(':')[0]
         ip_addr = socket.gethostbyname(domain)
-        response = requests.get(f"https://ipapi.co/{ip_addr}/json/").json()
+        # Usando ip-api (gratuita e rápida)
+        response = requests.get(f"http://ip-api.com/json/{ip_addr}").json()
         return {
             "IP": ip_addr,
-            "Country": f"{response.get('country_name')} {response.get('country_code')}",
-            "City": response.get('city'),
-            "Org": response.get('org')
+            "País": f"{response.get('country')} {response.get('countryCode')}",
+            "Cidade": response.get('city'),
+            "Provedor": response.get('isp'),
+            "Status Servidor": response.get('status')
         }
     except:
-        return {"IP": "N/A", "Country": "Desconhecido", "City": "N/A", "Org": "N/A"}
+        return None
+
+def check_link_status(url):
+    try:
+        # Timeout curto para não travar; apenas verifica se o cabeçalho responde
+        r = requests.head(url, timeout=3)
+        return "✅ ON" if r.status_code == 200 else f"❌ {r.status_code}"
+    except:
+        return "offline"
 
 if url_input:
-    with st.spinner('Analisando link e servidor...'):
+    with st.spinner('Extraindo dados do servidor e processando lista...'):
+        server_info = get_server_info(url_input)
+        
         try:
-            # 1. Obter info do Servidor
-            server_info = get_server_info(url_input)
-            
-            # 2. Baixar e Processar M3U
-            r = requests.get(url_input, timeout=10)
+            r = requests.get(url_input, timeout=15)
             lines = r.text.splitlines()
             
             streams = []
             current_item = {}
-            
             for line in lines:
                 if line.startswith("#EXTINF:"):
-                    # Extrair nome do canal
                     name_match = re.search(r',(.+)$', line)
-                    current_item['Name'] = name_match.group(1) if name_match else "Unknown"
-                    
-                    # Extrair Grupo/Categoria
+                    current_item['Nome'] = name_match.group(1) if name_match else "Sem Nome"
                     group_match = re.search(r'group-title="([^"]+)"', line)
-                    current_item['Group'] = group_match.group(1) if group_match else "N/A"
-                    
+                    current_item['Grupo'] = group_match.group(1) if group_match else "Geral"
                 elif line.startswith("http"):
                     current_item['URL'] = line
-                    # Identificar Formato
                     ext = urlparse(line).path.split('.')[-1].lower()
-                    current_item['Format'] = ext if ext in ['ts', 'm3u8', 'mp4', 'mkv'] else 'Outro/Stream'
+                    current_item['Formato'] = ext if ext in ['ts', 'm3u8', 'mp4'] else 'stream'
                     streams.append(current_item)
                     current_item = {}
 
             df = pd.DataFrame(streams)
 
-            # --- EXIBIÇÃO ---
-            col1, col2, col3 = st.columns(3)
-            col1.metric("País do Servidor", server_info['Country'])
-            col2.metric("IP do Host", server_info['IP'])
-            col3.metric("Total de Canais", len(df))
+            # --- Painel de Informações ---
+            if server_info:
+                st.success(f"Servidor localizado em: {server_info['País']} ({server_info['Cidade']})")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("País", server_info['País'])
+                c2.metric("ISP", server_info['Provedor'])
+                c3.metric("Total de Itens", len(df))
+                c4.metric("Formato Nativo", df['Formato'].mode()[0] if not df.empty else "N/A")
 
-            st.subheader("🌐 Detalhes do Servidor")
-            st.json(server_info)
-
-            st.subheader("📊 Lista de Conteúdo")
+            # --- Verificação de Status ---
+            st.divider()
+            st.subheader("🛠 Teste de Conectividade")
+            num_test = st.number_input("Quantos links deseja testar (amostra)?", min_value=1, max_value=100, value=10)
             
-            # Filtros rápidos
-            formato_filtro = st.multiselect("Filtrar por Formato:", df['Format'].unique(), default=df['Format'].unique())
-            df_filtrado = df[df['Format'].isin(formato_filtro)]
-            
-            st.dataframe(df_filtrado, use_container_width=True)
+            if st.button(f"Testar Primeiros {num_test} Links"):
+                test_list = df.head(num_test).copy()
+                with st.spinner('Testando links...'):
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        results = list(executor.map(check_link_status, test_list['URL']))
+                    test_list['Status'] = results
+                    st.table(test_list[['Nome', 'Status', 'Formato']])
 
-            # Gráfico de Formatos
-            st.subheader("📈 Distribuição de Formatos")
-            st.bar_chart(df['Format'].value_counts())
+            # --- Tabela Completa ---
+            st.subheader("📋 Lista Completa")
+            st.dataframe(df, use_container_width=True)
 
         except Exception as e:
-            st.error(f"Erro ao processar: {e}")
+            st.error(f"Erro ao ler M3U: {e}")
 else:
-    st.info("Aguardando link para iniciar a análise.")
+    st.info("Insira um link para começar.")
