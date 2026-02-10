@@ -5,90 +5,90 @@ import re
 import socket
 from urllib.parse import urlparse
 
-st.set_page_config(page_title="M3U Analyzer", page_icon="📺", layout="wide")
+st.set_page_config(page_title="M3U Analyzer Pro", layout="wide")
 
-st.title("📺 M3U Stream & Server Analyzer")
+st.title("📺 Analisador de Listas IPTV")
 
-url_input = st.text_input("Link M3U:", placeholder="http://...")
+url_input = st.text_input("Cole seu link M3U:", placeholder="http://...")
 
 def get_server_info(url):
     try:
         domain = urlparse(url).netloc.split(':')[0]
         ip_addr = socket.gethostbyname(domain)
         resp = requests.get(f"http://ip-api.com/json/{ip_addr}", timeout=5).json()
-        return {
-            "IP": ip_addr,
-            "País": f"{resp.get('country')} {resp.get('countryCode')}",
-            "Org": resp.get('isp')
-        }
+        return resp
     except:
-        return {"IP": "N/A", "País": "Desconhecido", "Org": "N/A"}
+        return None
 
 if url_input:
-    with st.spinner('Lendo dados do servidor...'):
+    with st.spinner('Processando...'):
         try:
-            # Info do Servidor
-            info = get_server_info(url_input)
+            # 1. Tentar pegar info do servidor
+            server_data = get_server_info(url_input)
             
-            # Request com User-Agent de IPTV para evitar bloqueio
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) VLC/3.0.18'}
-            r = requests.get(url_input, headers=headers, timeout=15)
+            # 2. Tentar baixar a lista com User-Agent de Smart TV
+            headers = {'User-Agent': 'Mozilla/5.0 (SmartHub; SmartTV; Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            response = requests.get(url_input, headers=headers, timeout=15)
             
-            if r.status_code != 200:
-                st.error(f"O servidor recusou a conexão (Erro {r.status_code}). O link pode ter expirado.")
+            if response.status_code != 200:
+                st.error(f"❌ O servidor retornou erro {response.status_code}. Link possivelmente expirado.")
                 st.stop()
 
-            # Processamento da Lista
-            lines = r.text.splitlines()
+            # 3. Extração manual para garantir que as colunas existam
+            lines = response.text.splitlines()
             streams = []
-            current = {}
+            current_name = ""
+            current_group = ""
 
             for line in lines:
                 if line.startswith("#EXTINF:"):
-                    # Extrair nome e tentar achar bandeiras/países
-                    name = line.split(',')[-1].strip()
-                    current['Nome'] = name
-                    
-                    # Tenta detectar país pelo nome (ex: UA, BR, PT)
-                    country_match = re.search(r'\[(\w{2})\]|\s(\w{2})\s|🇺🇦|🇧🇷', name)
-                    current['País Detectado'] = country_match.group(0) if country_match else "Geral"
+                    # Pega o nome após a última vírgula
+                    current_name = line.split(',')[-1].strip()
+                    # Tenta pegar o grupo
+                    group_match = re.search(r'group-title="([^"]+)"', line)
+                    current_group = group_match.group(1) if group_match else "Geral"
                 
                 elif line.strip().startswith("http"):
-                    link = line.strip()
-                    current['URL'] = link
-                    # Identificar formato pela extensão
-                    ext = urlparse(link).path.split('.')[-1].lower()
-                    current['Formato'] = ext if ext in ['ts', 'm3u8', 'mp4', 'mkv'] else 'stream'
-                    streams.append(current)
-                    current = {}
+                    url_path = urlparse(line.strip()).path.lower()
+                    # Define o formato pela extensão
+                    if url_path.endswith('.ts'): fmt = "TS"
+                    elif url_path.endswith('.m3u8'): fmt = "M3U8"
+                    elif url_path.endswith('.mp4'): fmt = "MP4"
+                    else: fmt = "Stream"
+                    
+                    streams.append({
+                        "Nome": current_name,
+                        "Grupo": current_group,
+                        "Formato": fmt,
+                        "URL": line.strip()
+                    })
 
-            # Exibição dos Dados
+            # 4. Exibição Segura
             if not streams:
-                st.warning("⚠️ O link foi lido, mas a lista de canais está VAZIA. Verifique o usuário e senha.")
-                st.json(info)
+                st.warning("⚠️ O link foi acessado, mas não há canais dentro dele. Verifique seu login/senha.")
+                if server_data:
+                    st.write(f"**Servidor:** {server_data.get('isp')} | **País:** {server_data.get('country')}")
             else:
                 df = pd.DataFrame(streams)
                 
-                # Interface
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Servidor (IP)", info['IP'])
-                col2.metric("País do Host", info['País'])
-                col3.metric("Canais Encontrados", len(df))
+                # Métricas
+                c1, c2, c3 = st.columns(3)
+                if server_data:
+                    c1.metric("País do Server", f"{server_data.get('countryCode')} 🌍")
+                    c2.metric("Provedor", server_data.get('org', 'N/A'))
+                c3.metric("Canais Encontrados", len(df))
 
-                st.subheader("📊 Resultados da Análise")
+                st.subheader("📋 Lista de Conteúdo")
                 
-                # Filtro Seguro: Só executa se a coluna existir
-                if 'Formato' in df.columns:
-                    fmts = st.multiselect("Filtrar por Formato:", df['Formato'].unique(), default=df['Formato'].unique())
-                    df = df[df['Formato'].isin(fmts)]
-
-                st.dataframe(df, use_container_width=True)
-                
-                # Resumo de Formatos
-                st.write("**Contagem por Formato:**")
-                st.write(df['Formato'].value_counts())
+                # Filtro que só aparece se houver dados
+                if "Formato" in df.columns:
+                    opcoes = st.multiselect("Filtrar Formatos:", df['Formato'].unique(), default=df['Formato'].unique())
+                    df_filtrado = df[df['Formato'].isin(opcoes)]
+                    st.dataframe(df_filtrado, use_container_width=True)
+                else:
+                    st.dataframe(df, use_container_width=True)
 
         except Exception as e:
-            st.error(f"Erro inesperado: {e}")
+            st.error(f"Ocorreu um problema técnico: {e}")
 else:
-    st.info("Insira o link acima para analisar.")
+    st.info("Insira um link acima para analisar.")
