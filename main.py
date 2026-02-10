@@ -1,115 +1,91 @@
 import streamlit as st
+import requests
 import socket
-import ssl
 from urllib.parse import urlparse
 import urllib3
+import ssl
 
-# Desabilitar avisos SSL
+# Desabilitar avisos
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-st.set_page_config(page_title="Domain Hunter Pro", layout="wide")
+st.set_page_config(page_title="Ultra Domain Hunter", layout="wide")
 
-def get_all_domains_from_cert(hostname):
+def get_domains_via_openssl_fallback(hostname):
     """
-    Tenta extrair domínios do certificado com tolerância a erros e timeout longo.
+    Tenta capturar o certificado usando a biblioteca SSL padrão com 
+    configurações específicas para contornar bloqueios de Proxy/Cloudflare.
     """
-    domains = set()
-    if not hostname:
-        return domains
+    domains = {hostname}
+    try:
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
         
-    domains.add(hostname)
-    
-    # Contexto SSL ultra-permissivo
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    # Forçar protocolos mais antigos se necessário
-    context.set_ciphers('DEFAULT@SECLEVEL=1')
-
-    # Tenta na porta 443 e também na 8443 (comum em painéis)
-    for port in [443, 8443]:
-        try:
-            # Aumentamos o timeout para 15 segundos
-            sock = socket.create_connection((hostname, port), timeout=15)
+        # A chave aqui é o server_hostname que ativa o SNI correto
+        with socket.create_connection((hostname, 443), timeout=10) as sock:
             with context.wrap_socket(sock, server_hostname=hostname) as ssock:
                 cert = ssock.getpeercert(binary_form=False)
                 
-                # Extração do Common Name
-                for sub in cert.get('subject', ()):
-                    for key, value in sub:
-                        if key == 'commonName':
-                            domains.add(value.replace('*.', ''))
+                # Coleta Common Name
+                if 'subject' in cert:
+                    for sub in cert['subject']:
+                        for key, val in sub:
+                            if key == 'commonName':
+                                domains.add(val.replace('*.', ''))
                 
-                # Extração do SAN (Subject Alternative Names)
+                # Coleta Subject Alternative Names (Onde está o 5sco.co)
                 if 'subjectAltName' in cert:
                     for type, name in cert['subjectAltName']:
                         if type == 'DNS':
                             domains.add(name.replace('*.', ''))
-            break # Se conseguiu em uma porta, para de tentar outras
-        except Exception:
-            continue
-            
+    except Exception as e:
+        st.error(f"Erro técnico na varredura: {e}")
+    
     return domains
 
 # --- INTERFACE ---
-st.title("🔍 Deep Domain Scanner")
-st.markdown("Busca avançada de mirrors via Certificado Digital (SAN/SSL).")
+st.title("🛡️ Ultra Domain & SAN Scanner")
+st.markdown("Varredura profunda de certificados para encontrar mirrors ocultos (Ex: 5sco.co).")
 
-# Link padrão solicitado
+# Link padrão
 default_link = "http://tv10.me"
 
-input_text = st.text_input(
-    "URL do Servidor / Link M3U:", 
-    value=default_link,
-    placeholder="Ex: http://servidor.com:80"
-)
+input_text = st.text_input("Cole o link M3U ou domínio:", value=default_link)
 
-if st.button("🚀 Iniciar Varredura"):
+if st.button("🔍 Localizar Mirrors Ocultos"):
     if input_text:
-        # Extração limpa do hostname
-        raw_url = input_text.strip()
-        if not raw_url.startswith(('http://', 'https://')):
-            raw_url = 'http://' + raw_url
+        # Extrair hostname de forma limpa
+        domain = input_text.replace("http://", "").replace("https://", "").split(":")[0].split("/")[0]
         
-        hostname = urlparse(raw_url).hostname
-        
-        if not hostname:
-            st.error("⚠️ Hostname inválido.")
-        else:
-            with st.spinner(f"Tentando ler certificados de {hostname}... Isso pode levar 15s."):
+        with st.spinner(f"Analisando certificados de {domain}..."):
+            all_domains = get_domains_via_openssl_fallback(domain)
+            
+            # Tentar pegar o IP para info adicional
+            try:
+                ip_addr = socket.gethostbyname(domain)
+            except:
+                ip_addr = "Não identificado"
+
+            st.subheader(f"🌐 Relatório: {domain}")
+            st.info(f"**IP de Conexão:** `{ip_addr}`")
+            
+            st.divider()
+
+            # Filtramos domínios irrelevantes (como domínios da própria cloudflare)
+            mirrors = sorted([d.lower() for d in all_domains if d])
+            
+            if len(mirrors) > 1:
+                st.success(f"✅ Encontrados **{len(mirrors)}** domínios vinculados no certificado!")
                 
-                found_domains = get_all_domains_from_cert(hostname)
+                # Exibição organizada
+                cols = st.columns(2)
+                for idx, d in enumerate(mirrors):
+                    with cols[idx % 2]:
+                        st.code(d, language="text")
                 
-                try:
-                    ip_addr = socket.gethostbyname(hostname)
-                    reverse_dns = socket.getfqdn(ip_addr)
-                except:
-                    ip_addr, reverse_dns = "N/A", "N/A"
+                st.text_area("Lista para cópia rápida:", value="\n".join(mirrors), height=150)
+            else:
+                st.warning("Apenas um domínio encontrado. Se você sabe que existem outros, o servidor pode estar usando certificados isolados por domínio.")
 
-                # --- EXIBIÇÃO ---
-                st.subheader(f"🌐 Resultados para {hostname}")
-                
-                c1, c2 = st.columns(2)
-                c1.metric("IP do Servidor", ip_addr)
-                c2.metric("DNS Reverso", reverse_dns)
-
-                st.divider()
-
-                # Limpeza final dos domínios encontrados
-                lista_limpa = sorted([d.lower() for d in found_domains if d])
-
-                if len(lista_limpa) > 1:
-                    st.success(f"✅ Encontrados **{len(lista_limpa)}** domínios no certificado!")
-                    for d in lista_limpa:
-                        if d == hostname.lower():
-                            st.write(f"🔹 **{d}** (Domínio Alvo)")
-                        else:
-                            st.write(f"🔗 `{d}` (Mirror Encontrado)")
-                    
-                    st.text_area("Copiável:", value="\n".join(lista_limpa), height=100)
-                elif len(lista_limpa) == 1:
-                    st.warning("Apenas o domínio original foi encontrado. O servidor pode estar usando um certificado único (sem mirrors) ou estar bloqueando a varredura.")
-                else:
-                    st.error("Não foi possível ler o certificado SSL (Conexão Recusada ou Timeout).")
-
-st.info("💡 **Dica:** Servidores de IPTV costumam bloquear IPs de data centers (como os do Streamlit Cloud). Se o erro de Timeout persistir, tente rodar o código localmente em sua máquina.")
+st.divider()
+st.caption("Nota: Este scanner utiliza SNI (Server Name Indication) para tentar extrair a lista SAN do certificado.")
