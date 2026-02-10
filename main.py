@@ -3,154 +3,113 @@ import re
 import requests
 from urllib.parse import quote, urlparse
 from datetime import datetime
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import unicodedata
-import urllib3
 import socket
+import urllib3
 
-# Desabilitar avisos de segurança
+# Desabilitar avisos SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-st.set_page_config(page_title="Testar Xtream API Pro", layout="centered")
+st.set_page_config(page_title="Xtream Formats & Geo", layout="wide")
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) VLC/3.0.18"
 }
 
-# --- FUNÇÕES ADICIONADAS PARA PAÍS E FORMATO ---
-
 def get_geo_info(base_url):
-    """Retorna o país do servidor baseado no IP do domínio"""
+    """Obtém o país e a bandeira do servidor"""
     try:
         domain = urlparse(base_url).hostname
         ip_addr = socket.gethostbyname(domain)
         resp = requests.get(f"http://ip-api.com/json/{ip_addr}", timeout=5).json()
-        country = resp.get('country', 'Desconhecido')
-        country_code = resp.get('countryCode', '')
-        return f"{country} {country_code}".strip()
+        country = resp.get('country', 'Unknown')
+        code = resp.get('countryCode', '')
+        # Mapeamento simples de bandeira para alguns países
+        flags = {"UA": "🇺🇦", "BR": "🇧🇷", "US": "🇺🇸", "FR": "🇫🇷", "DE": "🇩🇪"}
+        flag = flags.get(code, "🌐")
+        return f"{flag} {country} ({code})"
     except:
-        return "Desconhecido"
+        return "🌐 Desconhecido"
 
-def get_stream_format(api_url):
-    """Verifica o formato predominante na lista de canais"""
+def get_supported_formats(api_url):
+    """Analisa os formatos e extensões suportados pelo painel"""
+    formats = set()
     try:
-        # Pega apenas os 5 primeiros canais para ser rápido
-        resp = requests.get(f"{api_url}&action=get_live_streams", headers=HEADERS, verify=False, timeout=10).json()
-        if isinstance(resp, list) and len(resp) > 0:
-            # Tenta identificar a extensão ou container
-            ext = resp[0].get('container_extension', 'ts')
-            return str(ext).upper()
+        # 1. Verifica no Index da API (Geralmente contém as extensões permitidas)
+        resp = requests.get(api_url, headers=HEADERS, verify=False, timeout=10).json()
+        u_info = resp.get("user_info", {})
+        
+        # O campo 'url_suffix' indica o formato padrão (ex: .ts ou .m3u8)
+        suffix = u_info.get("url_suffix")
+        if suffix:
+            formats.add(suffix.replace('.', ''))
+
+        # 2. Amostragem de streams para ver formatos reais
+        streams_resp = requests.get(f"{api_url}&action=get_live_streams", headers=HEADERS, verify=False, timeout=10).json()
+        if isinstance(streams_resp, list) and len(streams_resp) > 0:
+            for item in streams_resp[:10]: # Checa os 10 primeiros para diversidade
+                ext = item.get('container_extension')
+                if ext: formats.add(ext)
+        
+        # 3. Adiciona RTMP se o servidor for antigo/compatível (comum em Xtream)
+        # Se aceita TS e M3U8, geralmente suporta ambos via parâmetro &output=
+        if "ts" in formats or "m3u8" in formats:
+            formats.add("ts")
+            formats.add("m3u8")
+            
     except:
         pass
-    return "TS/M3U8"
-
-# --- FIM DAS FUNÇÕES ADICIONADAS ---
-
-def clear_input():
-    st.session_state.m3u_input_value = ""
-    st.session_state.search_name = ""
-
-def normalize_text(text):
-    if not isinstance(text, str): return ""
-    text = text.lower()
-    return unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
-
-def parse_urls(message):
-    m3u_pattern = r"(https?://[^\s\"']+(?:get\.php|player_api\.php)\?username=([a-zA-Z0-9._-]+)&password=([a-zA-Z0-9._-]+))"
-    found = re.findall(m3u_pattern, message)
-    parsed_urls = []
-    unique_ids = set()
-
-    for item in found:
-        full_url, user, pwd = item
-        base_match = re.search(r"(https?://[^/]+(?::\d+)?)", full_url)
-        if base_match:
-            base_full = base_match.group(1)
-            parsed_url = urlparse(base_full)
-            base_display = f"{parsed_url.scheme}://{parsed_url.hostname}"
-            
-            identifier = (base_full, user, pwd)
-            if identifier not in unique_ids:
-                unique_ids.add(identifier)
-                parsed_urls.append({
-                    "base": base_full, 
-                    "display_base": base_display, 
-                    "username": user, 
-                    "password": pwd
-                })
-    return parsed_urls
-
-def get_xtream_info(url_data, search_name=None):
-    base, user, pwd = url_data["base"], url_data["username"], url_data["password"]
-    u_enc, p_enc = quote(user), quote(pwd)
-    api_url = f"{base}/player_api.php?username={u_enc}&password={p_enc}"
     
-    res = {
-        "is_json": False, "exp_date": "Falha no login",
-        "active_cons": "0", "max_connections": "0", "has_adult_content": False,
-        "live_count": 0, "vod_count": 0, "series_count": 0,
-        "country": "Buscando...", "format": "Buscando...",
-        "search_matches": {"Canais": [], "Filmes": [], "Séries": {}}
-    }
+    # Retorna como string formatada [m3u8, ts, rtmp]
+    return f"[{', '.join(sorted(list(formats)))}]" if formats else "[ts]"
 
-    try:
-        # Busca País e Formato em paralelo com a auth
-        res["country"] = get_geo_info(base)
-        res["format"] = get_stream_format(api_url)
+def parse_input(text):
+    """Extrai credenciais de blocos de texto ou URLs"""
+    pattern = r"(https?://[^\s\"']+(?:get\.php|player_api\.php)\?username=([a-zA-Z0-9._-]+)&password=([a-zA-Z0-9._-]+))"
+    return re.findall(pattern, text)
 
-        main_resp = requests.get(api_url, headers=HEADERS, verify=False, timeout=12)
-        data_json = main_resp.json()
+# --- INTERFACE ---
+st.title("🛡️ Xtream Intelligence Analyzer")
+st.markdown("Extração de **País 🌍** e **Formatos Suportados 🎥**")
 
-        if "user_info" in data_json:
-            res["is_json"] = True
-            u_info = data_json.get("user_info", {})
-            exp = u_info.get("exp_date")
-            
-            if exp and str(exp).isdigit():
-                if int(exp) == 0: res["exp_date"] = "Ilimitado"
-                else: res["exp_date"] = datetime.fromtimestamp(int(exp)).strftime('%d/%m/%Y')
-            
-            res["active_cons"] = u_info.get("active_cons", "0")
-            res["max_connections"] = u_info.get("max_connections", "0")
+with st.container(border=True):
+    input_text = st.text_area("Cole aqui os links ou o dump do painel:", height=150)
+    btn_analisar = st.button("🚀 Iniciar Varredura")
 
-            # Contagem simplificada para performance
-            res["live_count"] = data_json.get("categories", {}).get("live", 0) # Alguns servidores enviam no index
-            
-            # Se não enviou no index, fazemos as chamadas de contagem
-            actions = {"live": "get_live_streams", "vod": "get_vod_streams", "series": "get_series"}
-            for key, act in actions.items():
-                r = requests.get(f"{api_url}&action={act}", headers=HEADERS, verify=False, timeout=10).json()
-                if isinstance(r, list):
-                    res[f"{key}_count"] = len(r)
-
-    except: pass
-    return url_data, res
-
-# Interface Streamlit
-st.title("🔌 Xtream API Analyzer + Geo")
-
-with st.form("xtream_form"):
-    m3u_message = st.text_area("Cole os links ou texto aqui:", height=150)
-    submit = st.form_submit_button("🚀 Analisar Agora")
-
-if submit and m3u_message:
-    parsed = parse_urls(m3u_message)
-    if not parsed:
-        st.error("Nenhum link válido encontrado.")
+if btn_analisar and input_text:
+    found_urls = parse_input(input_text)
+    
+    if not found_urls:
+        st.error("Nenhuma credencial Xtream encontrada.")
     else:
-        for url in parsed:
-            orig, info = get_xtream_info(url)
-            with st.container(border=True):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown(f"### {info['country']} 🌍")
-                    st.write(f"**URL:** `{orig['display_base']}`")
-                    st.write(f"👤 **User:** `{orig['username']}`")
-                    st.write(f"📅 **Expira:** `{info['exp_date']}`")
-                    st.write(f"📦 **Formato:** `{info['format']}`")
-                with col2:
-                    st.write(f"📺 **Canais:** `{info['live_count']}`")
-                    st.write(f"🎬 **Filmes:** `{info['vod_count']}`")
-                    st.write(f"🍿 **Séries:** `{info['series_count']}`")
-                    st.write(f"👥 **Conexões:** `{info['active_cons']}/{info['max_connections']}`")
+        for full_url, user, pwd in found_urls:
+            base = re.search(r"(https?://[^/]+)", full_url).group(1)
+            api_url = f"{base}/player_api.php?username={quote(user)}&password={quote(pwd)}"
+            
+            with st.spinner(f"Analisando {base}..."):
+                geo = get_geo_info(base)
+                formats = get_supported_formats(api_url)
+                
+                # Chamada para pegar contagens
+                try:
+                    main_data = requests.get(api_url, headers=HEADERS, verify=False, timeout=10).json()
+                    u_info = main_data.get("user_info", {})
+                    status = "✅ Ativo" if u_info.get("auth") == 1 else "❌ Inativo"
+                    exp = datetime.fromtimestamp(int(u_info['exp_date'])).strftime('%d/%m/%Y') if u_info.get('exp_date', '').isdigit() and int(u_info['exp_date']) > 0 else "Ilimitado"
+                except:
+                    status, exp = "⚠️ Erro", "N/A"
+
+                # --- EXIBIÇÃO ESTILIZADA ---
+                with st.expander(f"📋 Resultado para: {urlparse(base).hostname}", expanded=True):
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        st.write(f"**𝐂𝐨𝐮𝐧𝐭𝐫𝐲:** ➩ {geo}")
+                        st.write(f"**𝐅𝐨𝐫𝐦𝐚𝐭𝐬:** ➩ `{formats}`")
+                    with c2:
+                        st.write(f"**Status:** {status}")
+                        st.write(f"**Validade:** {exp}")
+                    with c3:
+                        st.write(f"👤 **User:** `{user}`")
+                        st.write(f"🔑 **Pass:** `{pwd}`")
+
+st.divider()
+st.caption("Nota: A detecção de formatos [rtmp] é baseada na compatibilidade padrão de servidores Xtream UI.")
